@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>White Elephant / Secret Santa Picker</title>
+  <style>
+    :root {
+      --bg: #0f172a; /* slate-900 */
+      --panel: #111827; /* gray-900 */
+      --muted: #94a3b8; /* slate-400 */
+      --text: #e5e7eb; /* gray-200 */
+      --accent: #22c55e; /* green-500 */
+      --danger: #ef4444; /* red-500 */
+      --border: #1f2937; /* gray-800 */
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; background: radial-gradient(80rem 80rem at 10% -10%, #1f2937 0%, var(--bg) 45%); color: var(--text); }
+    header { padding: 2rem 1rem 1rem; text-align: center; }
+    h1 { margin: 0; font-weight: 800; letter-spacing: 0.3px; }
+    .sub { color: var(--muted); margin-top: .5rem; }
+    main { max-width: 1100px; margin: 0 auto; padding: 1rem; display: grid; gap: 1rem; grid-template-columns: repeat(12, 1fr); }
+    .card { grid-column: span 12; background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.01)); border: 1px solid var(--border); border-radius: 16px; padding: 1rem; box-shadow: 0 10px 30px rgba(0,0,0,.25); }
+    .row { display: grid; grid-template-columns: repeat(12, 1fr); gap: 1rem; }
+    .card h2 { margin: .2rem 0 1rem; font-size: 1.1rem; color: #d1d5db; }
+    label { font-size: .9rem; color: var(--muted); }
+    input[type="text"], input[type="number"], textarea, select { width: 100%; padding: .7rem .8rem; border-radius: 10px; border: 1px solid var(--border); background: #0b1220; color: var(--text); outline: none; }
+    textarea { min-height: 120px; resize: vertical; }
+    .btn { display: inline-flex; align-items: center; gap: .5rem; padding: .6rem .9rem; border-radius: 12px; border: 1px solid var(--border); background: #0b1220; color: var(--text); cursor: pointer; user-select: none; }
+    .btn.primary { background: var(--accent); color: #062312; border: none; font-weight: 700; }
+    .btn.danger { background: var(--danger); border: none; color: #2a0b0b; font-weight: 700; }
+    .btn:disabled { opacity: .6; cursor: not-allowed; }
+    .stack { display: flex; gap: .5rem; flex-wrap: wrap; }
+    .pill { display: inline-flex; align-items: center; gap: .5rem; padding: .35rem .6rem; border-radius: 999px; background: #0b1220; border: 1px solid var(--border); }
+    .pill button { background: transparent; border: none; color: var(--muted); cursor: pointer; }
+    .grid { width: 100%; border-collapse: collapse; }
+    .grid th, .grid td { text-align: left; padding: .5rem .6rem; border-bottom: 1px solid var(--border); }
+    .muted { color: var(--muted); }
+    .right { text-align: right; }
+    .success { color: var(--accent); }
+    .error { color: #fca5a5; }
+    .small { font-size: .85rem; }
+    .section-actions { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
+
+    @media (min-width: 900px) {
+      .span-6 { grid-column: span 6; }
+      .span-4 { grid-column: span 4; }
+      .span-8 { grid-column: span 8; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>White Elephant / Secret Santa Picker</h1>
+    <div class="sub">Client‑side app that remembers previous years so you don't repeat the same match. Works on GitHub Pages. Data saves to your browser.</div>
+  </header>
+  <main>
+    <section class="card span-6">
+      <h2>1) Participants</h2>
+      <div class="row">
+        <div class="span-8">
+          <label for="nameInput">Add a name</label>
+          <input id="nameInput" type="text" placeholder="e.g., Alice" />
+        </div>
+        <div class="span-4" style="display:flex;align-items:flex-end;">
+          <button id="addBtn" class="btn">Add</button>
+        </div>
+      </div>
+      <div class="row" style="margin-top:.5rem;">
+        <div class="span-12">
+          <label for="bulkNames">Bulk add (one per line)</label>
+          <textarea id="bulkNames" placeholder="Bob\nCharlie\nDana"></textarea>
+        </div>
+        <div class="span-12 section-actions">
+          <button id="bulkAddBtn" class="btn">Bulk Add</button>
+          <button id="clearParticipantsBtn" class="btn danger">Clear All</button>
+        </div>
+      </div>
+      <div style="margin-top:.75rem;">
+        <div class="muted small">Current participants:</div>
+        <div id="participants" class="stack" style="margin-top:.4rem;"></div>
+      </div>
+    </section>
+
+    <section class="card span-6">
+      <h2>2) Constraints & Year</h2>
+      <div class="row">
+        <div class="span-4">
+          <label for="yearInput">Draw year</label>
+          <input id="yearInput" type="number" />
+        </div>
+        <div class="span-4">
+          <label for="lookback">Avoid repeats from last N years</label>
+          <input id="lookback" type="number" min="1" value="1" />
+        </div>
+        <div class="span-4" style="display:flex;align-items:flex-end;">
+          <button id="generateBtn" class="btn primary">Generate Pairings</button>
+        </div>
+      </div>
+      <div id="status" class="small muted" style="margin-top:.5rem;"></div>
+      <div id="results" style="margin-top:.75rem;"></div>
+    </section>
+
+    <section class="card span-12">
+      <h2>3) History</h2>
+      <div class="section-actions" style="margin-bottom:.5rem;">
+        <button id="exportBtn" class="btn">Export JSON</button>
+        <label class="btn" for="importFile" style="cursor:pointer;">Import JSON<input id="importFile" type="file" accept="application/json" style="display:none;"/></label>
+        <button id="resetBtn" class="btn danger">Reset all data</button>
+      </div>
+      <div id="history"></div>
+    </section>
+  </main>
+
+  <template id="pairRowTmpl">
+    <table class="grid">
+      <thead>
+        <tr><th>Giver</th><th>→</th><th>Recipient</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </template>
+
+  <script>
+    /*********************************
+     * Storage & State
+     *********************************/
+    const LS_KEY = 'we_picker_v1';
+    function nowYear(){ return new Date().getFullYear(); }
+
+    const state = load() || { participants: [], years: [] }; // years: [{year: 2025, pairs: [[giver, recipient], ...]}]
+
+    function save(){ localStorage.setItem(LS_KEY, JSON.stringify(state)); }
+    function load(){ try { return JSON.parse(localStorage.getItem(LS_KEY)); } catch { return null; } }
+
+    function normalizeName(s){ return s.trim().replace(/\s+/g,' ').replace(/^\p{Zs}+|\p{Zs}+$/gu,''); }
+
+    /*********************************
+     * DOM helpers
+     *********************************/
+    const $ = sel => document.querySelector(sel);
+    const $el = (tag, attrs={}, children=[]) => { const n = document.createElement(tag); Object.entries(attrs).forEach(([k,v]) => (k in n) ? (n[k]=v) : n.setAttribute(k,v)); children.forEach(c=> n.appendChild(typeof c==='string' ? document.createTextNode(c) : c)); return n; };
+
+    function renderParticipants(){
+      const wrap = $('#participants');
+      wrap.innerHTML = '';
+      if(state.participants.length === 0){ wrap.appendChild($el('div', { className:'muted small' }, ['(none yet)'])); return; }
+      state.participants.forEach(name => {
+        const pill = $el('span', { className: 'pill' }, [ name, $el('button', { onclick: () => { state.participants = state.participants.filter(n => n!==name); save(); renderParticipants(); renderHistory(); } }, ['✕']) ]);
+        wrap.appendChild(pill);
+      });
+    }
+
+    function renderHistory(){
+      const host = $('#history');
+      host.innerHTML = '';
+      if(state.years.length === 0){ host.appendChild($el('div', { className:'muted small' }, ['No history yet. Generate pairings to create an entry.'])); return; }
+      // newest first
+      const entries = [...state.years].sort((a,b)=>b.year - a.year);
+      entries.forEach(entry => {
+        const h3 = $el('h3', {}, [String(entry.year)]);
+        const tableTmpl = document.getElementById('pairRowTmpl');
+        const table = tableTmpl.content.firstElementChild.cloneNode(true);
+        const tbody = table.querySelector('tbody');
+        entry.pairs.forEach(([g,r]) => {
+          const tr = $el('tr', {}, [ $el('td',{},[g]), $el('td', { className:'muted' }, ['→']), $el('td',{},[r]) ]);
+          tbody.appendChild(tr);
+        });
+        const delBtn = $el('button', { className:'btn', onclick: () => { state.years = state.years.filter(y => y !== entry); save(); renderHistory(); } }, ['Delete Year']);
+        const card = $el('div', { className:'card', style:'padding:.5rem 1rem;margin-top:.5rem;' }, [h3, table, $el('div', { className:'section-actions', style:'margin-top:.5rem' }, [delBtn])]);
+        host.appendChild(card);
+      });
+    }
+
+    function renderResults(pairs){
+      const host = $('#results');
+      host.innerHTML = '';
+      if(!pairs){ return; }
+      const table = document.getElementById('pairRowTmpl').content.firstElementChild.cloneNode(true);
+      const tbody = table.querySelector('tbody');
+      pairs.forEach(([g,r]) => tbody.appendChild($el('tr',{},[$el('td',{},[g]), $el('td',{className:'muted'},['→']), $el('td',{},[r])])));
+      host.appendChild(table);
+    }
+
+    /*********************************
+     * Pairing Algorithm (with constraints)
+     * - No self matches
+     * - Avoid repeats from last N years (configurable)
+     * Uses backtracking with MRV (fewest-options-first) heuristic
+     *********************************/
+    function buildForbiddenMap(lookback){
+      const forbidden = new Map();
+      state.participants.forEach(p => forbidden.set(p, new Set([p]))); // no self
+      if(lookback > 0){
+        const recent = [...state.years].sort((a,b)=>b.year-a.year).slice(0, lookback);
+        recent.forEach(({pairs}) => {
+          pairs.forEach(([giver, recipient]) => {
+            if(forbidden.has(giver)) forbidden.get(giver).add(recipient);
+          });
+        });
+      }
+      return forbidden; // Map<giver, Set<recipient>>
+    }
+
+    function shuffled(arr){ const a = arr.slice(); for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
+
+    function findMatching(participants, forbidden){
+      // domains: Map<giver, Set<candidates>>
+      const domains = new Map(participants.map(g => [g, new Set(participants.filter(r => !forbidden.get(g).has(r)))]));
+      // quick impossible check
+      for(const [g,set] of domains){ if(set.size===0) return null; }
+
+      const assignment = new Map();
+      const usedRecipients = new Set();
+
+      function selectUnassigned(){
+        // MRV: pick giver with fewest legal options
+        let bestG = null, bestCount = Infinity;
+        for(const g of participants){
+          if(assignment.has(g)) continue;
+          const count = Array.from(domains.get(g)).filter(r => !usedRecipients.has(r)).length;
+          if(count < bestCount){ bestCount = count; bestG = g; }
+        }
+        return bestG;
+      }
+
+      function backtrack(){
+        if(assignment.size === participants.length) return true;
+        const g = selectUnassigned();
+        if(!g) return false;
+        const options = shuffled(Array.from(domains.get(g))).filter(r => !usedRecipients.has(r));
+        // Fail-fast: if only one recipient left globally, try that path first
+        for(const r of options){
+          assignment.set(g, r);
+          usedRecipients.add(r);
+          // Forward-checking minimal: ensure no future domain becomes empty
+          let feasible = true;
+          for(const h of participants){
+            if(assignment.has(h)) continue;
+            let hasOpt = false;
+            for(const rr of domains.get(h)){
+              if(!usedRecipients.has(rr)) { hasOpt = true; break; }
+            }
+            if(!hasOpt){ feasible = false; break; }
+          }
+          if(feasible && backtrack()) return true;
+          assignment.delete(g);
+          usedRecipients.delete(r);
+        }
+        return false;
+      }
+
+      return backtrack() ? Array.from(assignment.entries()) : null; // [ [giver, recipient], ...]
+    }
+
+    /*********************************
+     * Actions
+     *********************************/
+    function addName(s){
+      const name = normalizeName(s || '');
+      if(!name) return;
+      if(state.participants.includes(name)) return;
+      state.participants.push(name);
+      state.participants.sort((a,b)=>a.localeCompare(b));
+      save();
+      renderParticipants();
+    }
+
+    function bulkAdd(text){
+      const lines = text.split(/\r?\n/).map(normalizeName).filter(Boolean);
+      const set = new Set(state.participants);
+      for(const n of lines){ set.add(n); }
+      state.participants = Array.from(set).sort((a,b)=>a.localeCompare(b));
+      save();
+      renderParticipants();
+    }
+
+    function clearParticipants(){
+      if(!confirm('Remove all participants?')) return;
+      state.participants = [];
+      save();
+      renderParticipants();
+    }
+
+    function generate(){
+      const year = parseInt($('#yearInput').value, 10) || nowYear();
+      const lookback = Math.max(0, parseInt($('#lookback').value, 10) || 0);
+      const status = $('#status');
+
+      if(state.participants.length < 2){ status.className='small error'; status.textContent='Need at least 2 participants.'; renderResults(null); return; }
+
+      const forbidden = buildForbiddenMap(lookback);
+
+      // Quick feasibility check: perfect matching necessary
+      // For each giver, count allowed; and for each recipient, ensure someone can receive them.
+      for(const g of state.participants){ if(forbidden.get(g).size >= state.participants.length){ status.className='small error'; status.textContent=`No valid recipients for ${g}. Adjust lookback or participants.`; return; } }
+
+      const pairs = findMatching(state.participants, forbidden);
+      if(!pairs){ status.className='small error'; status.textContent='Couldn\'t find a valid arrangement with current constraints. Try decreasing lookback, adding participants, or editing history.'; renderResults(null); return; }
+
+      // Persist
+      // If a year exists, replace it after confirmation
+      const existing = state.years.find(y => y.year === year);
+      if(existing){
+        if(!confirm(`Overwrite existing pairings for ${year}?`)) { status.className='small muted'; status.textContent='Cancelled.'; return; }
+        existing.pairs = pairs;
+      } else {
+        state.years.push({ year, pairs });
+      }
+      save();
+      status.className='small success';
+      status.textContent=`Saved ${pairs.length} pairings for ${year}.`;
+      renderResults(pairs);
+      renderHistory();
+    }
+
+    function exportJSON(){
+      const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = $el('a', { href: url, download: 'white-elephant-history.json' });
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(()=> URL.revokeObjectURL(url), 0);
+    }
+
+    function importJSON(file){
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const data = JSON.parse(reader.result);
+          if(!Array.isArray(data.participants) || !Array.isArray(data.years)) throw new Error('Invalid format');
+          // Basic normalization
+          data.participants = data.participants.map(normalizeName).filter(Boolean);
+          data.years = data.years.map(y => ({ year: parseInt(y.year,10), pairs: (y.pairs||[]).map(p=>[normalizeName(p[0]||''), normalizeName(p[1]||'')]) }));
+          localStorage.setItem(LS_KEY, JSON.stringify(data));
+          location.reload();
+        } catch(e){ alert('Import failed: '+ e.message); }
+      };
+      reader.readAsText(file);
+    }
+
+    function resetAll(){
+      if(!confirm('This will erase participants and history. Continue?')) return;
+      localStorage.removeItem(LS_KEY);
+      location.reload();
+    }
+
+    /*********************************
+     * Wire up UI
+     *********************************/
+    $('#addBtn').addEventListener('click', () => { addName($('#nameInput').value); $('#nameInput').value=''; $('#nameInput').focus(); });
+    $('#nameInput').addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); $('#addBtn').click(); } });
+    $('#bulkAddBtn').addEventListener('click', () => { bulkAdd($('#bulkNames').value); $('#bulkNames').value=''; });
+    $('#clearParticipantsBtn').addEventListener('click', clearParticipants);
+
+    $('#generateBtn').addEventListener('click', generate);
+
+    $('#exportBtn').addEventListener('click', exportJSON);
+    $('#importFile').addEventListener('change', (e) => { if(e.target.files && e.target.files[0]) importJSON(e.target.files[0]); });
+    $('#resetBtn').addEventListener('click', resetAll);
+
+    // Initial render
+    $('#yearInput').value = nowYear();
+    renderParticipants();
+    renderHistory();
+  </script>
+</body>
+</html>
