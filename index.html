@@ -25,7 +25,7 @@
     .card h2 { margin: .2rem 0 1rem; font-size: 1.1rem; color: #d1d5db; }
     label { font-size: .9rem; color: var(--muted); }
     input[type="text"], input[type="number"], textarea, select { width: 100%; padding: .7rem .8rem; border-radius: 10px; border: 1px solid var(--border); background: #0b1220; color: var(--text); outline: none; }
-    textarea { min-height: 120px; resize: vertical; }
+    textarea { min-height: 220px; resize: vertical; }
     .btn { display: inline-flex; align-items: center; gap: .5rem; padding: .6rem .9rem; border-radius: 12px; border: 1px solid var(--border); background: #0b1220; color: var(--text); cursor: pointer; user-select: none; }
     .btn.primary { background: var(--accent); color: #062312; border: none; font-weight: 700; }
     .btn.danger { background: var(--danger); border: none; color: #2a0b0b; font-weight: 700; }
@@ -51,10 +51,21 @@
 </head>
 <body>
   <header>
-    <h1>White Elephant / Secret Santa Picker</h1>
-    <div class="sub">Client‑side app that remembers previous years so you don't repeat the same match. Works on GitHub Pages. Data saves to your browser.</div>
+    <h1>Neimeyer Names!</h1>
+    <div class="sub">Client‑side app with Google Sheets sync. Avoid repeats across years. Host on GitHub Pages.</div>
   </header>
   <main>
+    <section class="card span-12" id="cloudBar" style="display:flex;justify-content:space-between;align-items:center;gap:.75rem;">
+      <div>
+        <strong>Sync:</strong> <span id="syncStatus" class="muted">initializing…</span>
+      </div>
+      <div class="section-actions">
+        <input id="apiUrl" type="text" placeholder="Paste your Apps Script Web App URL here and press Save" />
+        <button id="saveApiUrl" class="btn">Save</button>
+        <button id="refreshBtn" class="btn">Refresh from Cloud</button>
+      </div>
+    </section>
+
     <section class="card span-6">
       <h2>1) Participants</h2>
       <div class="row">
@@ -74,6 +85,7 @@
         <div class="span-12 section-actions">
           <button id="bulkAddBtn" class="btn">Bulk Add</button>
           <button id="clearParticipantsBtn" class="btn danger">Clear All</button>
+          <button id="saveParticipantsBtn" class="btn">Save to Cloud</button>
         </div>
       </div>
       <div style="margin-top:.75rem;">
@@ -106,7 +118,7 @@
       <div class="section-actions" style="margin-bottom:.5rem;">
         <button id="exportBtn" class="btn">Export JSON</button>
         <label class="btn" for="importFile" style="cursor:pointer;">Import JSON<input id="importFile" type="file" accept="application/json" style="display:none;"/></label>
-        <button id="resetBtn" class="btn danger">Reset all data</button>
+        <button id="resetBtn" class="btn danger">Reset local cache</button>
       </div>
       <div id="history"></div>
     </section>
@@ -123,17 +135,86 @@
 
   <script>
     /*********************************
-     * Storage & State
+     * CONFIG
      *********************************/
-    const LS_KEY = 'we_picker_v1';
+    const LS_KEY = 'we_picker_v2_cloudcache';
+    // Paste your Apps Script Web App URL into the UI once published (or set default here):
+    let API_URL = localStorage.getItem('we_api_url') || '';
+
+    /*********************************
+     * State
+     *********************************/
     function nowYear(){ return new Date().getFullYear(); }
+    const state = loadLocal() || { participants: [], years: [] }; // years: [{year, pairs:[[giver,recipient],...]}]
 
-    const state = load() || { participants: [], years: [] }; // years: [{year: 2025, pairs: [[giver, recipient], ...]}]
+    function saveLocal(){ localStorage.setItem(LS_KEY, JSON.stringify(state)); }
+    function loadLocal(){ try { return JSON.parse(localStorage.getItem(LS_KEY)); } catch { return null; } }
 
-    function save(){ localStorage.setItem(LS_KEY, JSON.stringify(state)); }
-    function load(){ try { return JSON.parse(localStorage.getItem(LS_KEY)); } catch { return null; } }
+    function normalizeName(s){ return String(s||'').trim().replace(/\s+/g,' '); }
 
-    function normalizeName(s){ return s.trim().replace(/\s+/g,' ').replace(/^\p{Zs}+|\p{Zs}+$/gu,''); }
+    /*********************************
+     * Cloud (Apps Script) API helpers
+     *********************************/
+    function setSyncStatus(txt, cls){ const el = document.getElementById('syncStatus'); el.textContent = txt; el.className = (cls||'muted'); }
+
+    async function apiGetState() {
+      if(!API_URL) throw new Error('Missing API URL');
+      const r = await fetch(API_URL + '?action=state', { method: 'GET' });
+      if(!r.ok) throw new Error('GET failed '+r.status);
+      return r.json();
+    }
+
+    async function apiSetParticipants(names) {
+      if(!API_URL) throw new Error('Missing API URL');
+      const r = await fetch(API_URL, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ action: 'setParticipants', names }) });
+      if(!r.ok) throw new Error('setParticipants failed '+r.status);
+      return r.json();
+    }
+
+    async function apiSaveYear(year, pairs) {
+      if(!API_URL) throw new Error('Missing API URL');
+      const r = await fetch(API_URL, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ action: 'saveYear', year, pairs }) });
+      if(!r.ok) throw new Error('saveYear failed '+r.status);
+      return r.json();
+    }
+
+    async function refreshFromCloud(){
+      try {
+        setSyncStatus('loading from cloud…');
+        const data = await apiGetState();
+        state.participants = (data.participants||[]).map(normalizeName);
+        state.years = Array.isArray(data.years) ? data.years.map(y=>({year:Number(y.year), pairs:(y.pairs||[]).map(p=>[normalizeName(p[0]), normalizeName(p[1])])})) : [];
+        saveLocal();
+        renderParticipants();
+        renderHistory();
+        setSyncStatus('connected', 'success');
+      } catch(err){
+        console.error(err);
+        setSyncStatus('offline (using local cache)', 'error');
+      }
+    }
+
+    async function pushParticipantsToCloud(){
+      try {
+        setSyncStatus('saving participants…');
+        await apiSetParticipants(state.participants);
+        setSyncStatus('saved ✓', 'success');
+      } catch(err){
+        console.error(err);
+        setSyncStatus('save failed (cached locally)', 'error');
+      }
+    }
+
+    async function pushYearToCloud(year, pairs){
+      try {
+        setSyncStatus(`saving ${year}…`);
+        await apiSaveYear(year, pairs);
+        setSyncStatus('saved ✓', 'success');
+      } catch(err){
+        console.error(err);
+        setSyncStatus('save failed (cached locally)', 'error');
+      }
+    }
 
     /*********************************
      * DOM helpers
@@ -146,7 +227,7 @@
       wrap.innerHTML = '';
       if(state.participants.length === 0){ wrap.appendChild($el('div', { className:'muted small' }, ['(none yet)'])); return; }
       state.participants.forEach(name => {
-        const pill = $el('span', { className: 'pill' }, [ name, $el('button', { onclick: () => { state.participants = state.participants.filter(n => n!==name); save(); renderParticipants(); renderHistory(); } }, ['✕']) ]);
+        const pill = $el('span', { className: 'pill' }, [ name, $el('button', { onclick: () => { state.participants = state.participants.filter(n => n!==name); saveLocal(); renderParticipants(); } }, ['✕']) ]);
         wrap.appendChild(pill);
       });
     }
@@ -155,19 +236,14 @@
       const host = $('#history');
       host.innerHTML = '';
       if(state.years.length === 0){ host.appendChild($el('div', { className:'muted small' }, ['No history yet. Generate pairings to create an entry.'])); return; }
-      // newest first
       const entries = [...state.years].sort((a,b)=>b.year - a.year);
       entries.forEach(entry => {
         const h3 = $el('h3', {}, [String(entry.year)]);
         const tableTmpl = document.getElementById('pairRowTmpl');
         const table = tableTmpl.content.firstElementChild.cloneNode(true);
         const tbody = table.querySelector('tbody');
-        entry.pairs.forEach(([g,r]) => {
-          const tr = $el('tr', {}, [ $el('td',{},[g]), $el('td', { className:'muted' }, ['→']), $el('td',{},[r]) ]);
-          tbody.appendChild(tr);
-        });
-        const delBtn = $el('button', { className:'btn', onclick: () => { state.years = state.years.filter(y => y !== entry); save(); renderHistory(); } }, ['Delete Year']);
-        const card = $el('div', { className:'card', style:'padding:.5rem 1rem;margin-top:.5rem;' }, [h3, table, $el('div', { className:'section-actions', style:'margin-top:.5rem' }, [delBtn])]);
+        entry.pairs.forEach(([g,r]) => { tbody.appendChild($el('tr', {}, [ $el('td',{},[g]), $el('td',{className:'muted'},['→']), $el('td',{},[r]) ])); });
+        const card = $el('div', { className:'card', style:'padding:.5rem 1rem;margin-top:.5rem;' }, [h3, table]);
         host.appendChild(card);
       });
     }
@@ -186,18 +262,14 @@
      * Pairing Algorithm (with constraints)
      * - No self matches
      * - Avoid repeats from last N years (configurable)
-     * Uses backtracking with MRV (fewest-options-first) heuristic
+     * Uses backtracking with MRV heuristic
      *********************************/
     function buildForbiddenMap(lookback){
       const forbidden = new Map();
-      state.participants.forEach(p => forbidden.set(p, new Set([p]))); // no self
+      state.participants.forEach(p => forbidden.set(p, new Set([p])));
       if(lookback > 0){
         const recent = [...state.years].sort((a,b)=>b.year-a.year).slice(0, lookback);
-        recent.forEach(({pairs}) => {
-          pairs.forEach(([giver, recipient]) => {
-            if(forbidden.has(giver)) forbidden.get(giver).add(recipient);
-          });
-        });
+        recent.forEach(({pairs}) => pairs.forEach(([giver, recipient]) => { if(forbidden.has(giver)) forbidden.get(giver).add(recipient); }));
       }
       return forbidden; // Map<giver, Set<recipient>>
     }
@@ -205,144 +277,43 @@
     function shuffled(arr){ const a = arr.slice(); for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
 
     function findMatching(participants, forbidden){
-      // domains: Map<giver, Set<candidates>>
       const domains = new Map(participants.map(g => [g, new Set(participants.filter(r => !forbidden.get(g).has(r)))]));
-      // quick impossible check
       for(const [g,set] of domains){ if(set.size===0) return null; }
-
       const assignment = new Map();
       const usedRecipients = new Set();
-
-      function selectUnassigned(){
-        // MRV: pick giver with fewest legal options
-        let bestG = null, bestCount = Infinity;
-        for(const g of participants){
-          if(assignment.has(g)) continue;
-          const count = Array.from(domains.get(g)).filter(r => !usedRecipients.has(r)).length;
-          if(count < bestCount){ bestCount = count; bestG = g; }
-        }
-        return bestG;
-      }
-
-      function backtrack(){
-        if(assignment.size === participants.length) return true;
-        const g = selectUnassigned();
-        if(!g) return false;
-        const options = shuffled(Array.from(domains.get(g))).filter(r => !usedRecipients.has(r));
-        // Fail-fast: if only one recipient left globally, try that path first
-        for(const r of options){
-          assignment.set(g, r);
-          usedRecipients.add(r);
-          // Forward-checking minimal: ensure no future domain becomes empty
-          let feasible = true;
-          for(const h of participants){
-            if(assignment.has(h)) continue;
-            let hasOpt = false;
-            for(const rr of domains.get(h)){
-              if(!usedRecipients.has(rr)) { hasOpt = true; break; }
-            }
-            if(!hasOpt){ feasible = false; break; }
-          }
-          if(feasible && backtrack()) return true;
-          assignment.delete(g);
-          usedRecipients.delete(r);
-        }
-        return false;
-      }
-
-      return backtrack() ? Array.from(assignment.entries()) : null; // [ [giver, recipient], ...]
+      function selectUnassigned(){ let bestG=null, best=Infinity; for(const g of participants){ if(assignment.has(g)) continue; const c=[...domains.get(g)].filter(r=>!usedRecipients.has(r)).length; if(c<best){best=c;bestG=g;} } return bestG; }
+      function backtrack(){ if(assignment.size===participants.length) return true; const g=selectUnassigned(); if(!g) return false; const options=shuffled([...domains.get(g)]).filter(r=>!usedRecipients.has(r)); for(const r of options){ assignment.set(g,r); usedRecipients.add(r); let feasible=true; for(const h of participants){ if(assignment.has(h)) continue; let ok=false; for(const rr of domains.get(h)){ if(!usedRecipients.has(rr)){ ok=true; break; } } if(!ok){ feasible=false; break; } } if(feasible && backtrack()) return true; assignment.delete(g); usedRecipients.delete(r);} return false; }
+      return backtrack() ? [...assignment.entries()] : null;
     }
 
     /*********************************
      * Actions
      *********************************/
-    function addName(s){
-      const name = normalizeName(s || '');
-      if(!name) return;
-      if(state.participants.includes(name)) return;
-      state.participants.push(name);
-      state.participants.sort((a,b)=>a.localeCompare(b));
-      save();
-      renderParticipants();
-    }
+    function addName(s){ const name=normalizeName(s||''); if(!name) return; if(state.participants.includes(name)) return; state.participants.push(name); state.participants.sort((a,b)=>a.localeCompare(b)); saveLocal(); renderParticipants(); }
+    function bulkAdd(text){ const lines=text.split(/\r?\n/).map(normalizeName).filter(Boolean); const set=new Set(state.participants); for(const n of lines) set.add(n); state.participants=[...set].sort((a,b)=>a.localeCompare(b)); saveLocal(); renderParticipants(); }
+    function clearParticipants(){ if(!confirm('Remove all participants?')) return; state.participants=[]; saveLocal(); renderParticipants(); }
 
-    function bulkAdd(text){
-      const lines = text.split(/\r?\n/).map(normalizeName).filter(Boolean);
-      const set = new Set(state.participants);
-      for(const n of lines){ set.add(n); }
-      state.participants = Array.from(set).sort((a,b)=>a.localeCompare(b));
-      save();
-      renderParticipants();
-    }
-
-    function clearParticipants(){
-      if(!confirm('Remove all participants?')) return;
-      state.participants = [];
-      save();
-      renderParticipants();
-    }
-
-    function generate(){
+    async function generate(){
       const year = parseInt($('#yearInput').value, 10) || nowYear();
       const lookback = Math.max(0, parseInt($('#lookback').value, 10) || 0);
       const status = $('#status');
-
       if(state.participants.length < 2){ status.className='small error'; status.textContent='Need at least 2 participants.'; renderResults(null); return; }
-
       const forbidden = buildForbiddenMap(lookback);
-
-      // Quick feasibility check: perfect matching necessary
-      // For each giver, count allowed; and for each recipient, ensure someone can receive them.
       for(const g of state.participants){ if(forbidden.get(g).size >= state.participants.length){ status.className='small error'; status.textContent=`No valid recipients for ${g}. Adjust lookback or participants.`; return; } }
-
       const pairs = findMatching(state.participants, forbidden);
-      if(!pairs){ status.className='small error'; status.textContent='Couldn\'t find a valid arrangement with current constraints. Try decreasing lookback, adding participants, or editing history.'; renderResults(null); return; }
-
-      // Persist
-      // If a year exists, replace it after confirmation
+      if(!pairs){ status.className='small error'; status.textContent='No valid arrangement with current constraints. Try decreasing lookback, adding participants, or editing history.'; renderResults(null); return; }
       const existing = state.years.find(y => y.year === year);
-      if(existing){
-        if(!confirm(`Overwrite existing pairings for ${year}?`)) { status.className='small muted'; status.textContent='Cancelled.'; return; }
-        existing.pairs = pairs;
-      } else {
-        state.years.push({ year, pairs });
-      }
-      save();
-      status.className='small success';
-      status.textContent=`Saved ${pairs.length} pairings for ${year}.`;
+      if(existing){ if(!confirm(`Overwrite existing pairings for ${year}?`)) { status.className='small muted'; status.textContent='Cancelled.'; return; } existing.pairs = pairs; } else { state.years.push({ year, pairs }); }
+      saveLocal();
+      try { await pushYearToCloud(year, pairs); } catch(_) {}
+      status.className='small success'; status.textContent=`Saved ${pairs.length} pairings for ${year}.`;
       renderResults(pairs);
       renderHistory();
     }
 
-    function exportJSON(){
-      const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = $el('a', { href: url, download: 'white-elephant-history.json' });
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(()=> URL.revokeObjectURL(url), 0);
-    }
-
-    function importJSON(file){
-      const reader = new FileReader();
-      reader.onload = () => {
-        try {
-          const data = JSON.parse(reader.result);
-          if(!Array.isArray(data.participants) || !Array.isArray(data.years)) throw new Error('Invalid format');
-          // Basic normalization
-          data.participants = data.participants.map(normalizeName).filter(Boolean);
-          data.years = data.years.map(y => ({ year: parseInt(y.year,10), pairs: (y.pairs||[]).map(p=>[normalizeName(p[0]||''), normalizeName(p[1]||'')]) }));
-          localStorage.setItem(LS_KEY, JSON.stringify(data));
-          location.reload();
-        } catch(e){ alert('Import failed: '+ e.message); }
-      };
-      reader.readAsText(file);
-    }
-
-    function resetAll(){
-      if(!confirm('This will erase participants and history. Continue?')) return;
-      localStorage.removeItem(LS_KEY);
-      location.reload();
-    }
+    function exportJSON(){ const blob=new Blob([JSON.stringify(state, null, 2)], { type:'application/json' }); const url=URL.createObjectURL(blob); const a=$el('a',{href:url,download:'white-elephant-history.json'}); document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),0); }
+    function importJSON(file){ const reader=new FileReader(); reader.onload=async()=>{ try{ const data=JSON.parse(reader.result); if(!Array.isArray(data.participants)||!Array.isArray(data.years)) throw new Error('Invalid format'); state.participants=data.participants.map(normalizeName).filter(Boolean); state.years=data.years.map(y=>({year:Number(y.year), pairs:(y.pairs||[]).map(p=>[normalizeName(p[0]||''), normalizeName(p[1]||'')])})); saveLocal(); renderParticipants(); renderHistory(); try{ await pushParticipantsToCloud(); for(const y of state.years){ await pushYearToCloud(y.year, y.pairs); } }catch(_){} } catch(e){ alert('Import failed: '+e.message); } }; reader.readAsText(file); }
+    function resetLocal(){ if(!confirm('This clears ONLY your local cache (cloud not affected). Continue?')) return; localStorage.removeItem(LS_KEY); location.reload(); }
 
     /*********************************
      * Wire up UI
@@ -351,17 +322,30 @@
     $('#nameInput').addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); $('#addBtn').click(); } });
     $('#bulkAddBtn').addEventListener('click', () => { bulkAdd($('#bulkNames').value); $('#bulkNames').value=''; });
     $('#clearParticipantsBtn').addEventListener('click', clearParticipants);
+    $('#saveParticipantsBtn').addEventListener('click', pushParticipantsToCloud);
 
     $('#generateBtn').addEventListener('click', generate);
 
     $('#exportBtn').addEventListener('click', exportJSON);
     $('#importFile').addEventListener('change', (e) => { if(e.target.files && e.target.files[0]) importJSON(e.target.files[0]); });
-    $('#resetBtn').addEventListener('click', resetAll);
+    $('#resetBtn').addEventListener('click', resetLocal);
+    $('#refreshBtn').addEventListener('click', refreshFromCloud);
+
+    // API URL input handling
+    const apiUrlInput = document.getElementById('apiUrl');
+    apiUrlInput.value = API_URL;
+    document.getElementById('saveApiUrl').addEventListener('click', () => {
+      API_URL = apiUrlInput.value.trim();
+      if(API_URL){ localStorage.setItem('we_api_url', API_URL); setSyncStatus('API URL saved', 'success'); refreshFromCloud(); }
+      else { localStorage.removeItem('we_api_url'); setSyncStatus('API URL cleared', 'muted'); }
+    });
 
     // Initial render
     $('#yearInput').value = nowYear();
     renderParticipants();
     renderHistory();
+    // Try cloud sync on load if we have an API URL
+    if(API_URL){ refreshFromCloud(); } else { setSyncStatus('paste Apps Script URL to connect', 'muted'); }
   </script>
 </body>
 </html>
