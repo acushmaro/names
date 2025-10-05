@@ -25,7 +25,7 @@
     .card h2 { margin: .2rem 0 1rem; font-size: 1.1rem; color: #d1d5db; }
     label { font-size: .9rem; color: var(--muted); }
     input[type="text"], input[type="number"], textarea { width: 100%; padding: .7rem .8rem; border-radius: 10px; border: 1px solid var(--border); background: #0b1220; color: var(--text); outline: none; }
-    /* Make bulk add box roomy and resizable both ways */
+    /* Bulk add box: roomy and resizable both ways */
     textarea { min-height: 320px; height: 320px; width: 100%; resize: both; overflow: auto; }
     .btn { display: inline-flex; align-items: center; gap: .5rem; padding: .6rem .9rem; border-radius: 12px; border: 1px solid var(--border); background: #0b1220; color: var(--text); cursor: pointer; user-select: none; }
     .btn.primary { background: var(--accent); color: #062312; border: none; font-weight: 700; }
@@ -82,7 +82,7 @@
 <body>
   <header>
     <h1>White Elephant / Secret Santa Picker</h1>
-    <div class="sub">Client-side app with Google Sheets sync. Avoid repeats across years. Host on GitHub Pages.</div>
+    <div class="sub">Client‑side app with Google Sheets sync. Avoid repeats across years. Host on GitHub Pages.</div>
   </header>
   <main>
     <section class="card span-12" id="cloudBar" style="display:flex;justify-content:space-between;align-items:center;gap:.75rem;">
@@ -131,7 +131,7 @@
         </div>
         <div class="span-4">
           <label for="lookback">Avoid repeats from last N years</label>
-          <input id="lookback" type="number" min="1" value="1" />
+          <input id="lookback" type="number" min="0" value="0" />
         </div>
         <div class="span-4" style="display:flex;align-items:flex-end;">
           <button id="generateBtn" class="btn primary">Generate Pairings</button>
@@ -165,8 +165,8 @@
     'use strict';
 
     // ======== CONFIG ========
-    // Hard-code your Apps Script Web App URL here so visitors don't have to paste it
-    var API_URL_DEFAULT = 'https://script.google.com/macros/s/AKfycbwmLHl3J5WJlQhywFo3DG3QdEuT3S7xDAgAmgmJvhOnAeLh6SJ3jnM9wkrhgI7L4vYRNg/exec'; // <-- REPLACE XXXX with your /exec id
+    // Hard-code your Apps Script Web App URL so visitors auto-sync
+    var API_URL_DEFAULT = 'https://script.google.com/macros/s/AKfycbwSJuRSx3VOjgzUFCG_-gOdyJeGBX-cfdnQV1AuNfOz6iLr7gFqMLYJf9uvhpjTKFJvVw/exec'; // <-- REPLACE with your /exec URL
     var LS_KEY = 'we_picker_v2_cloudcache';
     var API_URL = API_URL_DEFAULT; // always use the hard-coded URL
 
@@ -185,6 +185,7 @@
       el.className = cls || 'muted';
     }
 
+    // ======== CLOUD API ========
     function apiGetState(){
       return fetch(API_URL + '?action=state', { method:'GET' })
         .then(function(r){ if(!r.ok) throw new Error('GET failed ' + r.status); return r.json(); });
@@ -195,9 +196,12 @@
         .then(function(r){ if(!r.ok) throw new Error('POST failed ' + r.status); return r.json(); });
     }
 
-    function apiSaveYear(year, pairs){
-      return fetch(API_URL, { method:'POST', body: JSON.stringify({ action:'saveYear', year:year, pairs:pairs }) })
-        .then(function(r){ if(!r.ok) throw new Error('POST failed ' + r.status); return r.json(); });
+    // ✨ CHANGED: include lookback in saveYear
+    function apiSaveYear(year, pairs, lookback){
+      return fetch(API_URL, {
+        method:'POST',
+        body: JSON.stringify({ action:'saveYear', year:year, pairs:pairs, lookback: lookback||0 })
+      }).then(function(r){ if(!r.ok) throw new Error('POST failed ' + r.status); return r.json(); });
     }
 
     function refreshFromCloud(){
@@ -214,9 +218,7 @@
         .catch(function(err){ console.error(err); setSyncStatus('offline: ' + err.message, 'error'); });
     }
 
-    function pushParticipantsToCloud(){ apiSetParticipants(state.participants).catch(console.error); }
-    function pushYearToCloud(year, pairs){ apiSaveYear(year, pairs).catch(console.error); }
-
+    // ======== DOM HELPERS ========
     function $(sel){ return document.querySelector(sel); }
     function $el(tag, attrs, children){
       var el = document.createElement(tag);
@@ -265,6 +267,7 @@
       host.appendChild(table);
     }
 
+    // ======== APP LOGIC ========
     function addName(s){ var n=normalizeName(s); if(!n||state.participants.indexOf(n)!==-1)return; state.participants.push(n); state.participants.sort(function(a,b){return a.localeCompare(b);}); saveLocal(); renderParticipants(); }
     function bulkAdd(text){ var lines=text.split(/\r?\n/); for(var i=0;i<lines.length;i++){ var n=normalizeName(lines[i]); if(n) addName(n); } }
     function clearParticipants(){ if(!confirm('Clear all?'))return; state.participants=[]; saveLocal(); renderParticipants(); }
@@ -273,46 +276,79 @@
       var year=parseInt($('#yearInput').value,10)||nowYear();
       var lookback=Math.max(0,parseInt($('#lookback').value,10)||0);
       var status=$('#status');
-      if(state.participants.length<2){ status.textContent='Need at least 2 participants.'; return; }
-      var forbidden=new Map();
-      for(var i=0;i<state.participants.length;i++){ var p=state.participants[i]; forbidden.set(p,new Set([p])); }
-      var recent=state.years.slice().sort(function(a,b){return b.year-a.year;}).slice(0,lookback);
-      for(var r=0;r<recent.length;r++){ var pairs=recent[r].pairs; for(var q=0;q<pairs.length;q++){ var gv=pairs[q][0], rc=pairs[q][1]; if(forbidden.has(gv)) forbidden.get(gv).add(rc); } }
-      var parts=state.participants.slice();
-      var result=null;
-      for(var tries=0;tries<1000&&!result;tries++){
-        var perm=parts.slice().sort(function(){return Math.random()-0.5;});
-        var ok=true; var pairs2=[];
-        for(var t=0;t<parts.length;t++){ var g=parts[t]; var rcpt=perm[t]; if(forbidden.get(g).has(rcpt)){ ok=false; break; } pairs2.push([g,rcpt]); }
-        if(ok) result=pairs2;
-      }
-      if(!result){ status.textContent='No valid pairing found.'; return; }
+      if(state.participants.length<2){ status.className='small error'; status.textContent='Need at least 2 participants.'; renderResults(null); return; }
+      // naive local pairing (backend will auto-fix if needed)
+      var shuffled=state.participants.slice().sort(function(){return Math.random()-0.5;});
+      var pairs=[]; for(var i=0;i<state.participants.length;i++){ pairs.push([state.participants[i], shuffled[i]]); }
+
       var existing=null; for(var y=0;y<state.years.length;y++){ if(state.years[y].year===year){ existing=state.years[y]; break; } }
-      if(existing){ if(!confirm('Overwrite '+year+'?')) return; existing.pairs=result; } else { state.years.push({year:year,pairs:result}); }
-      saveLocal(); pushYearToCloud(year,result); status.textContent='Saved pairings for '+year; renderResults(result); renderHistory();
+      if(existing){ if(!confirm('Overwrite existing pairings for '+year+'?')) { status.className='small muted'; status.textContent='Cancelled.'; return; } existing.pairs=pairs; } else { state.years.push({year:year,pairs:pairs}); }
+      saveLocal();
+      pushYearToCloud(year, pairs); // backend may auto-adjust, then we refresh
+
+      status.className='small success';
+      status.textContent='Saved '+pairs.length+' pairings for '+year+' (server may auto-adjust under constraints).';
+      renderResults(pairs);
+      renderHistory();
     }
 
-    // Wire up UI
+    function exportJSON(){
+      var blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+      var url = URL.createObjectURL(blob);
+      var a = $el('a', { href: url, download: 'white-elephant-history.json' });
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function(){ URL.revokeObjectURL(url); }, 0);
+    }
+
+    function importJSON(file){
+      var reader = new FileReader();
+      reader.onload = function(){
+        try {
+          var data = JSON.parse(reader.result);
+          if(!Array.isArray(data.participants) || !Array.isArray(data.years)) throw new Error('Invalid format');
+          state.participants = data.participants.map(normalizeName).filter(Boolean);
+          state.years = data.years.map(function(y){ return { year: Number(y.year), pairs: (y.pairs||[]) }; });
+          saveLocal();
+          renderParticipants();
+          renderHistory();
+          apiSetParticipants(state.participants).catch(function(e){ console.error(e); });
+          for(var i=0;i<state.years.length;i++){ apiSaveYear(state.years[i].year, state.years[i].pairs, 0).catch(function(e){ console.error(e); }); }
+        } catch(e){ alert('Import failed: ' + e.message); }
+      };
+      reader.readAsText(file);
+    }
+
+    function resetLocal(){ if(!confirm('This clears ONLY your local cache (cloud not affected). Continue?')) return; localStorage.removeItem(LS_KEY); location.reload(); }
+
+    // ✨ CHANGED: include lookback + refresh after save
+    function pushYearToCloud(year, pairs){
+      var lb = Math.max(0, parseInt(document.getElementById('lookback').value,10) || 0);
+      setSyncStatus('saving ' + year + '…');
+      return apiSaveYear(year, pairs, lb)
+        .then(function(){ setSyncStatus('saved ✓', 'success'); return refreshFromCloud(); })
+        .catch(function(err){ console.error(err); setSyncStatus('save failed (cached locally)', 'error'); });
+    }
+
+    // ======== WIRE UP UI ========
     document.getElementById('addBtn').onclick=function(){ addName($('#nameInput').value); $('#nameInput').value=''; };
     document.getElementById('bulkAddBtn').onclick=function(){ bulkAdd($('#bulkNames').value); $('#bulkNames').value=''; };
     document.getElementById('clearParticipantsBtn').onclick=clearParticipants;
-    document.getElementById('saveParticipantsBtn').onclick=function(){ pushParticipantsToCloud(); };
+    document.getElementById('saveParticipantsBtn').onclick=function(){ setSyncStatus('saving participants…'); apiSetParticipants(state.participants).then(function(){ setSyncStatus('saved ✓','success'); }).catch(function(err){ console.error(err); setSyncStatus('save failed (cached locally)','error'); }); };
     document.getElementById('generateBtn').onclick=generate;
-    document.getElementById('exportBtn').onclick=function(){ var blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'}); var a=$el('a',{href:URL.createObjectURL(blob),download:'white-elephant-history.json'}); document.body.appendChild(a); a.click(); a.remove(); };
-    document.getElementById('importFile').onchange=function(e){ var f=e.target.files[0]; if(!f) return; var r=new FileReader(); r.onload=function(){ try{ var data=JSON.parse(r.result); if(!Array.isArray(data.participants)||!Array.isArray(data.years)) throw new Error('Invalid format'); state.participants=data.participants.map(normalizeName).filter(Boolean); state.years=data.years.map(function(y){ return { year:Number(y.year), pairs:(y.pairs||[]) }; }); saveLocal(); renderParticipants(); renderHistory(); pushParticipantsToCloud(); for(var i=0;i<state.years.length;i++){ pushYearToCloud(state.years[i].year,state.years[i].pairs); } } catch(ex){ alert('Import failed: '+ex.message); } }; r.readAsText(f); };
-    document.getElementById('resetBtn').onclick=function(){ if(!confirm('This clears ONLY your local cache (cloud not affected). Continue?')) return; localStorage.removeItem(LS_KEY); location.reload(); };
+    document.getElementById('exportBtn').onclick=exportJSON;
+    document.getElementById('importFile').onchange=function(e){ if(e.target.files && e.target.files[0]) importJSON(e.target.files[0]); };
+    document.getElementById('resetBtn').onclick=resetLocal;
     document.getElementById('refreshBtn').onclick=function(){ refreshFromCloud(); };
 
-    // Initial render
+    // ======== INIT ========
     document.getElementById('yearInput').value = nowYear();
     renderParticipants();
     renderHistory();
 
-    // Global error handlers so we never stick on "initializing…"
     window.addEventListener('error', function(e){ setSyncStatus('error: ' + (e && e.message ? e.message : 'unknown'), 'error'); });
     window.addEventListener('unhandledrejection', function(e){ var msg=(e && e.reason && (e.reason.message||e.reason))||'promise rejected'; setSyncStatus('error: ' + msg, 'error'); });
 
-    // Auto-sync on load with a watchdog timeout
+    // Auto-sync on load with watchdog
     (function(){
       var watchdog = setTimeout(function(){
         var txt = document.getElementById('syncStatus').textContent || '';
