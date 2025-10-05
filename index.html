@@ -25,6 +25,7 @@
     .card h2 { margin: .2rem 0 1rem; font-size: 1.1rem; color: #d1d5db; }
     label { font-size: .9rem; color: var(--muted); }
     input[type="text"], input[type="number"], textarea { width: 100%; padding: .7rem .8rem; border-radius: 10px; border: 1px solid var(--border); background: #0b1220; color: var(--text); outline: none; }
+    /* Make bulk add box roomy and resizable both ways */
     textarea { min-height: 320px; height: 320px; width: 100%; resize: both; overflow: auto; }
     .btn { display: inline-flex; align-items: center; gap: .5rem; padding: .6rem .9rem; border-radius: 12px; border: 1px solid var(--border); background: #0b1220; color: var(--text); cursor: pointer; user-select: none; }
     .btn.primary { background: var(--accent); color: #062312; border: none; font-weight: 700; }
@@ -52,7 +53,7 @@
 <body>
   <header>
     <h1>White Elephant / Secret Santa Picker</h1>
-    <div class="sub">Client‑side app with Google Sheets sync. Avoid repeats across years. Host on GitHub Pages.</div>
+    <div class="sub">Client-side app with Google Sheets sync. Avoid repeats across years. Host on GitHub Pages.</div>
   </header>
   <main>
     <section class="card span-12" id="cloudBar" style="display:flex;justify-content:space-between;align-items:center;gap:.75rem;">
@@ -76,7 +77,7 @@
         </div>
       </div>
       <div class="row" style="margin-top:.5rem;">
-        <div class="span-12 span-wide">
+        <div class="span-12">
           <label for="bulkNames">Bulk add (one per line)</label>
           <textarea id="bulkNames" placeholder="Bob&#10;Charlie&#10;Dana"></textarea>
         </div>
@@ -135,9 +136,10 @@
     'use strict';
 
     // ======== CONFIG ========
-    var API_URL_DEFAULT = 'https://script.google.com/macros/s/AKfycbyDF7NfXWg8YIYFEvlNAur2BLYE4EXcOkLMspsgHrj22LSxfw8KnkxpUWWt_WgWn6eYjQ/exec'; // paste your web app URL here
+    // Hard-code your Apps Script Web App URL here so visitors don't have to paste it
+    var API_URL_DEFAULT = 'https://script.google.com/macros/s/XXXX/exec'; // <-- REPLACE XXXX with your /exec id
     var LS_KEY = 'we_picker_v2_cloudcache';
-    var API_URL = localStorage.getItem('we_api_url') || API_URL_DEFAULT;
+    var API_URL = API_URL_DEFAULT; // always use the hard-coded URL
 
     function nowYear(){ return new Date().getFullYear(); }
 
@@ -155,7 +157,7 @@
     }
 
     function apiGetState(){
-      return fetch(API_URL + '?action=state')
+      return fetch(API_URL + '?action=state', { method:'GET' })
         .then(function(r){ if(!r.ok) throw new Error('GET failed ' + r.status); return r.json(); });
     }
 
@@ -180,10 +182,7 @@
           renderHistory();
           setSyncStatus('connected', 'success');
         })
-        .catch(function(err){
-          console.error(err);
-          setSyncStatus('offline: ' + err.message, 'error');
-        });
+        .catch(function(err){ console.error(err); setSyncStatus('offline: ' + err.message, 'error'); });
     }
 
     function pushParticipantsToCloud(){ apiSetParticipants(state.participants).catch(console.error); }
@@ -193,29 +192,36 @@
     function $el(tag, attrs, children){
       var el = document.createElement(tag);
       if(attrs){ for(var k in attrs){ if(k in el) el[k] = attrs[k]; else el.setAttribute(k, attrs[k]); } }
-      if(children){ children.forEach(function(c){ el.appendChild(typeof c==='string'?document.createTextNode(c):c); }); }
+      if(children){ for(var i=0;i<children.length;i++){ var c=children[i]; el.appendChild(typeof c==='string'?document.createTextNode(c):c); } }
       return el;
     }
 
     function renderParticipants(){
       var host = $('#participants'); host.innerHTML='';
       if(state.participants.length===0){ host.appendChild($el('div',{className:'muted small'},['(none yet)'])); return; }
-      state.participants.forEach(function(name){
-        var pill = $el('span',{className:'pill'},[name,$el('button',{onclick:function(){ state.participants=state.participants.filter(function(n){return n!==name;}); saveLocal(); renderParticipants(); }},['✕'])]);
-        host.appendChild(pill);
-      });
+      for(var i=0;i<state.participants.length;i++){
+        (function(name){
+          var pill = $el('span',{className:'pill'},[name,$el('button',{onclick:function(){ state.participants=state.participants.filter(function(n){return n!==name;}); saveLocal(); renderParticipants(); }},['✕'])]);
+          host.appendChild(pill);
+        })(state.participants[i]);
+      }
     }
 
     function renderHistory(){
       var host=$('#history'); host.innerHTML='';
       if(state.years.length===0){ host.appendChild($el('div',{className:'muted small'},['No history yet.'])); return; }
-      state.years.slice().sort(function(a,b){return b.year-a.year;}).forEach(function(entry){
+      var entries = state.years.slice().sort(function(a,b){return b.year-a.year;});
+      for(var i=0;i<entries.length;i++){
+        var entry = entries[i];
         var h3=$el('h3',{},[String(entry.year)]);
         var table=document.getElementById('pairRowTmpl').content.firstElementChild.cloneNode(true);
         var tbody=table.querySelector('tbody');
-        entry.pairs.forEach(function(p){ tbody.appendChild($el('tr',{},[$el('td',{},[p[0]]),$el('td',{className:'muted'},['→']),$el('td',{},[p[1]])])); });
+        for(var j=0;j<entry.pairs.length;j++){
+          var p = entry.pairs[j];
+          tbody.appendChild($el('tr',{},[$el('td',{},[p[0]]),$el('td',{className:'muted'},['→']),$el('td',{},[p[1]])]));
+        }
         host.appendChild($el('div',{className:'card',style:'padding:.5rem 1rem;margin-top:.5rem;'},[h3,table]));
-      });
+      }
     }
 
     function renderResults(pairs){
@@ -223,40 +229,70 @@
       if(!pairs) return;
       var table=document.getElementById('pairRowTmpl').content.firstElementChild.cloneNode(true);
       var tbody=table.querySelector('tbody');
-      pairs.forEach(function(p){ tbody.appendChild($el('tr',{},[$el('td',{},[p[0]]),$el('td',{className:'muted'},['→']),$el('td',{},[p[1]])])); });
+      for(var i=0;i<pairs.length;i++){
+        var pr = pairs[i];
+        tbody.appendChild($el('tr',{},[$el('td',{},[pr[0]]),$el('td',{className:'muted'},['→']),$el('td',{},[pr[1]])]));
+      }
       host.appendChild(table);
     }
 
-    function addName(s){ var n=normalizeName(s); if(!n||state.participants.includes(n))return; state.participants.push(n); state.participants.sort(); saveLocal(); renderParticipants(); }
-    function bulkAdd(text){ text.split(/\r?\n/).map(normalizeName).filter(Boolean).forEach(addName); }
+    function addName(s){ var n=normalizeName(s); if(!n||state.participants.indexOf(n)!==-1)return; state.participants.push(n); state.participants.sort(function(a,b){return a.localeCompare(b);}); saveLocal(); renderParticipants(); }
+    function bulkAdd(text){ var lines=text.split(/\r?\n/); for(var i=0;i<lines.length;i++){ var n=normalizeName(lines[i]); if(n) addName(n); } }
     function clearParticipants(){ if(!confirm('Clear all?'))return; state.participants=[]; saveLocal(); renderParticipants(); }
 
     function generate(){
-      var year=parseInt($('#yearInput').value)||nowYear();
-      var lookback=Math.max(0,parseInt($('#lookback').value)||0);
+      var year=parseInt($('#yearInput').value,10)||nowYear();
+      var lookback=Math.max(0,parseInt($('#lookback').value,10)||0);
       var status=$('#status');
-      if(state.participants.length<2){status.textContent='Need at least 2 participants.';return;}
+      if(state.participants.length<2){ status.textContent='Need at least 2 participants.'; return; }
       var forbidden=new Map();
-      state.participants.forEach(function(p){forbidden.set(p,new Set([p]));});
-      state.years.slice().sort(function(a,b){return b.year-a.year;}).slice(0,lookback).forEach(function(e){e.pairs.forEach(function(p){if(forbidden.has(p[0]))forbidden.get(p[0]).add(p[1]);});});
-      var parts=state.participants;
+      for(var i=0;i<state.participants.length;i++){ var p=state.participants[i]; forbidden.set(p,new Set([p])); }
+      var recent=state.years.slice().sort(function(a,b){return b.year-a.year;}).slice(0,lookback);
+      for(var r=0;r<recent.length;r++){ var pairs=recent[r].pairs; for(var q=0;q<pairs.length;q++){ var gv=pairs[q][0], rc=pairs[q][1]; if(forbidden.has(gv)) forbidden.get(gv).add(rc); } }
+      var parts=state.participants.slice();
       var result=null;
       for(var tries=0;tries<1000&&!result;tries++){
-        var shuffled=parts.slice().sort(function(){return Math.random()-0.5;});
-        var valid=true; var pairs=[];
-        for(var i=0;i<parts.length;i++){ var g=parts[i]; var r=shuffled[i]; if(forbidden.get(g).has(r)){valid=false;break;} pairs.push([g,r]); }
-        if(valid)result=pairs;
+        var perm=parts.slice().sort(function(){return Math.random()-0.5;});
+        var ok=true; var pairs2=[];
+        for(var t=0;t<parts.length;t++){ var g=parts[t]; var rcpt=perm[t]; if(forbidden.get(g).has(rcpt)){ ok=false; break; } pairs2.push([g,rcpt]); }
+        if(ok) result=pairs2;
       }
-      if(!result){status.textContent='No valid pairing found.';return;}
-      var existing=state.years.find(function(y){return y.year===year;});
-      if(existing){ if(!confirm('Overwrite '+year+'?'))return; existing.pairs=result; } else state.years.push({year:year,pairs:result});
+      if(!result){ status.textContent='No valid pairing found.'; return; }
+      var existing=null; for(var y=0;y<state.years.length;y++){ if(state.years[y].year===year){ existing=state.years[y]; break; } }
+      if(existing){ if(!confirm('Overwrite '+year+'?')) return; existing.pairs=result; } else { state.years.push({year:year,pairs:result}); }
       saveLocal(); pushYearToCloud(year,result); status.textContent='Saved pairings for '+year; renderResults(result); renderHistory();
     }
 
-    document.getElementById('addBtn').onclick=function(){addName($('#nameInput').value);$('#nameInput').value='';};
-    document.getElementById('bulkAddBtn').onclick=function(){bulkAdd($('#bulkNames').value);$('#bulkNames').value='';};
+    // Wire up UI
+    document.getElementById('addBtn').onclick=function(){ addName($('#nameInput').value); $('#nameInput').value=''; };
+    document.getElementById('bulkAddBtn').onclick=function(){ bulkAdd($('#bulkNames').value); $('#bulkNames').value=''; };
     document.getElementById('clearParticipantsBtn').onclick=clearParticipants;
-    document.getElementById('saveParticipantsBtn').onclick=function(){pushParticipantsToCloud();};
+    document.getElementById('saveParticipantsBtn').onclick=function(){ pushParticipantsToCloud(); };
     document.getElementById('generateBtn').onclick=generate;
-    document.getElementById('exportBtn').onclick=function(){var blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});var a=$el('a',{href:URL.createObjectURL(blob),download:'white-elephant-history.json'});document.body.appendChild(a);a.click();a.remove();};
-    document.getElementById('importFile').onchange=function(e){var f=e.target.files[0];if(!f)return;var r=new FileReader();r.onload=function(){try{var d
+    document.getElementById('exportBtn').onclick=function(){ var blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'}); var a=$el('a',{href:URL.createObjectURL(blob),download:'white-elephant-history.json'}); document.body.appendChild(a); a.click(); a.remove(); };
+    document.getElementById('importFile').onchange=function(e){ var f=e.target.files[0]; if(!f) return; var r=new FileReader(); r.onload=function(){ try{ var data=JSON.parse(r.result); if(!Array.isArray(data.participants)||!Array.isArray(data.years)) throw new Error('Invalid format'); state.participants=data.participants.map(normalizeName).filter(Boolean); state.years=data.years.map(function(y){ return { year:Number(y.year), pairs:(y.pairs||[]) }; }); saveLocal(); renderParticipants(); renderHistory(); pushParticipantsToCloud(); for(var i=0;i<state.years.length;i++){ pushYearToCloud(state.years[i].year,state.years[i].pairs); } } catch(ex){ alert('Import failed: '+ex.message); } }; r.readAsText(f); };
+    document.getElementById('resetBtn').onclick=function(){ if(!confirm('This clears ONLY your local cache (cloud not affected). Continue?')) return; localStorage.removeItem(LS_KEY); location.reload(); };
+    document.getElementById('refreshBtn').onclick=function(){ refreshFromCloud(); };
+
+    // Initial render
+    document.getElementById('yearInput').value = nowYear();
+    renderParticipants();
+    renderHistory();
+
+    // Global error handlers so we never stick on "initializing…"
+    window.addEventListener('error', function(e){ setSyncStatus('error: ' + (e && e.message ? e.message : 'unknown'), 'error'); });
+    window.addEventListener('unhandledrejection', function(e){ var msg=(e && e.reason && (e.reason.message||e.reason))||'promise rejected'; setSyncStatus('error: ' + msg, 'error'); });
+
+    // Auto-sync on load with a watchdog timeout
+    (function(){
+      var watchdog = setTimeout(function(){
+        var txt = document.getElementById('syncStatus').textContent || '';
+        if (txt.indexOf('connected') === -1 && txt.indexOf('offline') === -1) {
+          setSyncStatus('offline: timeout', 'error');
+        }
+      }, 8000);
+      refreshFromCloud().finally(function(){ clearTimeout(watchdog); });
+    })();
+  </script>
+</body>
+</html>
