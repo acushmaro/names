@@ -51,7 +51,7 @@
 </head>
 <body>
   <header>
-    <h1>Neimeyer Names!</h1>
+    <h1>White Elephant / Secret Santa Picker</h1>
     <div class="sub">Client‑side app with Google Sheets sync. Avoid repeats across years. Host on GitHub Pages.</div>
   </header>
   <main>
@@ -166,14 +166,22 @@
 
     async function apiSetParticipants(names) {
       if(!API_URL) throw new Error('Missing API URL');
-      const r = await fetch(API_URL, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ action: 'setParticipants', names }) });
+      // Use a "simple" POST to avoid CORS preflight (no custom headers)
+      const r = await fetch(API_URL, { method: 'POST', body: JSON.stringify({ action: 'setParticipants', names }) });
+      if(!r.ok) throw new Error('setParticipants failed '+r.status);
+      return r.json();
+    }, body: JSON.stringify({ action: 'setParticipants', names }) });
       if(!r.ok) throw new Error('setParticipants failed '+r.status);
       return r.json();
     }
 
     async function apiSaveYear(year, pairs) {
       if(!API_URL) throw new Error('Missing API URL');
-      const r = await fetch(API_URL, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ action: 'saveYear', year, pairs }) });
+      // Avoid preflight: no Content-Type header
+      const r = await fetch(API_URL, { method: 'POST', body: JSON.stringify({ action: 'saveYear', year, pairs }) });
+      if(!r.ok) throw new Error('saveYear failed '+r.status);
+      return r.json();
+    }, body: JSON.stringify({ action: 'saveYear', year, pairs }) });
       if(!r.ok) throw new Error('saveYear failed '+r.status);
       return r.json();
     }
@@ -190,7 +198,7 @@
         setSyncStatus('connected', 'success');
       } catch(err){
         console.error(err);
-        setSyncStatus('offline (using local cache)', 'error');
+        setSyncStatus('offline: '+ (err && err.message ? err.message : 'unknown error'), 'error');
       }
     }
 
