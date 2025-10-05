@@ -63,6 +63,7 @@
         <input id="apiUrl" type="text" placeholder="Paste your Apps Script Web App URL here and press Save" />
         <button id="saveApiUrl" class="btn">Save</button>
         <button id="refreshBtn" class="btn">Refresh from Cloud</button>
+        <button id="testApiBtn" class="btn">Test API</button>
       </div>
     </section>
 
@@ -155,11 +156,7 @@
     /*********************************
      * Cloud (Apps Script) API helpers
      *********************************/
-    function setSyncStatus(txt, cls){ const el = document.getElementById('syncStatus'); el.textContent = txt; el.className = (cls||'muted'); }
-
-    async function apiGetState() {
-      if(!API_URL) throw new Error('Missing API URL');
-      const r = await fetch(API_URL + '?action=state', { method: 'GET' });
+    function setSyncStatus(txt, cls){ const el = document.getElementById('syncStatus'); el.textContent = txt; el.className = (cls||'muted'); });
       if(!r.ok) throw new Error('GET failed '+r.status);
       return r.json();
     }
@@ -352,7 +349,40 @@
     $('#yearInput').value = nowYear();
     renderParticipants();
     renderHistory();
-    // Try cloud sync on load if we have an API URL
+
+    // Global error/reporting to surface issues instead of staying on "initializing…"
+    window.addEventListener('error', (e)=>{
+      setSyncStatus('error: '+ (e && e.message ? e.message : 'unknown'), 'error');
+    });
+    window.addEventListener('unhandledrejection', (e)=>{
+      const msg = (e && e.reason && (e.reason.message||e.reason)) || 'promise rejected';
+      setSyncStatus('error: '+ msg, 'error');
+    });
+
+    // API URL helpers
+    const apiUrlInput = document.getElementById('apiUrl');
+    apiUrlInput.value = API_URL;
+    document.getElementById('saveApiUrl').addEventListener('click', () => {
+      let url = apiUrlInput.value.trim();
+      if(url.endsWith('/dev')){
+        alert('That URL ends with /dev. Use the Web App URL ending with /exec.');
+        return;
+      }
+      if(url && !/https:\/\/script.google.com\/macros\//.test(url)){
+        if(!confirm('This does not look like a Google Apps Script Web App URL. Save anyway?')) return;
+      }
+      API_URL = url;
+      if(API_URL){ localStorage.setItem('we_api_url', API_URL); setSyncStatus('API URL saved', 'success'); refreshFromCloud(); }
+      else { localStorage.removeItem('we_api_url'); setSyncStatus('paste Apps Script URL to connect', 'muted'); }
+    });
+
+    document.getElementById('testApiBtn').addEventListener('click', () => {
+      if(!API_URL){ alert('Paste and save your Web App URL first.'); return; }
+      const u = API_URL + (API_URL.includes('?') ? '&' : '?') + 'action=state';
+      window.open(u, '_blank');
+    });
+
+    // Try cloud sync on load if we have an API URL; otherwise show hint
     if(API_URL){ refreshFromCloud(); } else { setSyncStatus('paste Apps Script URL to connect', 'muted'); }
   </script>
 </body>
